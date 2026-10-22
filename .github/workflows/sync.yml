@@ -2,7 +2,7 @@ name: Sync TVBox 单线路
 
 on:
   schedule:
-    - cron: '0 1 * * *'      # 每天 UTC 1 点（北京时间 9 点）
+    - cron: '0 18 * * *'   # 北京时间凌晨 2 点（UTC 18:00）
   workflow_dispatch:
 
 permissions:
@@ -12,7 +12,7 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: 下载并解压 TVBoxOSC/tvbox
         run: |
