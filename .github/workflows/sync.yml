@@ -55,7 +55,6 @@ jobs:
           except Exception as e:
               print(f'❌ api.json 无法解析: {e}'); sys.exit(1)
 
-          # 收集所有 ./ 开头的本地引用，兼容 "./spider.jar;md5;xxx" 这类写法
           refs = set()
           for s in walk(cfg):
               if s.startswith('./'):
@@ -69,34 +68,68 @@ jobs:
               for p in missing: print('  [缺失] ./' + p)
               sys.exit(1)
 
-          # 乱码扫描：仅告警不阻断（未被引用的乱码文件不影响运行）
           bad = [str(p.relative_to(root)) for p in root.rglob('*')
                  if p.is_file() and any(c in p.name for c in '�?æåø§')]
           if bad:
-              print('⚠️ 疑似乱码文件（未阻断，请留意上游打包编码）:')
+              print('⚠️ 疑似乱码文件（未阻断）:')
               for p in bad: print('  [乱码?]', p)
 
           print(f'✅ 校验通过：api.json 共引用 {len(refs)} 个本地文件，全部存在')
           PY
 
-      - name: 本地清理（删“版本信息”站点与 *版本.png）
+      - name: 本地定制（删版本信息/版本图 · logo 指向本仓库 · 合并 custom.json）
         run: |
           python3 - <<'PY'
-          import json, pathlib
+          import json, pathlib, sys
           root = pathlib.Path('/tmp/ex')
           p = root / 'api.json'
           cfg = json.loads(p.read_text(encoding='utf-8'))
+
+          # ---- 1) 删“版本信息”站点与 *版本.png ----
           before = len(cfg['sites'])
-          # 按 key 或 api 双重匹配：上游哪天改了 key 名也照样删得到；
-          # 上游哪天自己删了，过滤器就是空操作，同步依然忠实
           cfg['sites'] = [s for s in cfg['sites']
                           if s.get('key') != '版本信息' and s.get('api') != 'csp_Market']
+          pngs = []
+          for f in root.glob('*版本.png'):
+              f.unlink(); pngs.append(f.name)
+          print(f'站点数 {before} → {len(cfg["sites"])}；已删除图片: {pngs or "无"}')
+
+          # ---- 2) logo 改为仓库根目录的 logo.gif ----
+          print(f'logo: {cfg.get("logo", "(无)")} → ./logo.gif')
+          cfg['logo'] = './logo.gif'
+
+          # ---- 3) 合并 custom.json 的 sites（custom.json 在仓库根目录）----
+          cpath = pathlib.Path('custom.json')
+          if not cpath.is_file():
+              print('⚠️ 仓库根目录没有 custom.json，跳过站点合并')
+          else:
+              try:
+                  c_sites = json.loads(cpath.read_text(encoding='utf-8'))['sites']
+                  if not isinstance(c_sites, list):
+                      raise ValueError('sites 字段不是数组')
+              except Exception as e:
+                  print(f'❌ custom.json 解析失败: {e}'); sys.exit(1)
+
+              # key 冲突时以 custom.json 为准（不想要这个语义就删掉下面两行）
+              c_keys = {s['key'] for s in c_sites
+                        if isinstance(s, dict) and s.get('key')}
+              dropped = [s.get('key') for s in cfg['sites'] if s.get('key') in c_keys]
+              cfg['sites'] = [s for s in cfg['sites'] if s.get('key') not in c_keys]
+
+              # 插入到第一个 key 或 name 含“动漫”的站点之前；找不到就追加到末尾
+              idx = next((i for i, s in enumerate(cfg['sites'])
+                          if '动漫' in s.get('name', '') or '动漫' in s.get('key', '')), None)
+              if idx is None:
+                  cfg['sites'].extend(c_sites)
+                  print(f'⚠️ 上游没有含“动漫”的站点，{len(c_sites)} 个 custom 站点已追加到末尾')
+              else:
+                  cfg['sites'][idx:idx] = c_sites
+                  anchor = cfg['sites'][idx + len(c_sites)].get('name', '?')
+                  print(f'✅ 已在“{anchor}”之前插入 {len(c_sites)} 个 custom 站点'
+                        f'（同 key 旧站点被替换: {dropped or "无"}）')
+
           p.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + '\n',
                        encoding='utf-8')
-          removed = []
-          for f in root.glob('*版本.png'):
-              f.unlink(); removed.append(f.name)
-          print(f'站点数 {before} → {len(cfg["sites"])}；已删除: {removed or "无"}')
           PY
 
       - name: 整体同步到仓库根目录
@@ -105,6 +138,8 @@ jobs:
                 --exclude '.git' \
                 --exclude '.github' \
                 --exclude '.gitignore' \
+                --exclude 'custom.json' \
+                --exclude 'logo.gif' \
                 --exclude 'TVBox/bili_cookie.txt' \
                 /tmp/ex/ ./
 
