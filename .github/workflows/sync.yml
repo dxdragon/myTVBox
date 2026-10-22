@@ -1,9 +1,9 @@
-name: Sync TVBox Source
+name: Sync TVBox 单线路
+
 on:
   schedule:
-    - cron: '0 3 * * *'    # 北京时间11点
-    - cron: '0 15 * * *'   # 北京时间23点
-  workflow_dispatch:        # 支持手动触发，调试用
+    - cron: '0 1 * * *'      # 每天 UTC 1 点（北京时间 9 点）
+  workflow_dispatch:          # 支持手动触发
 
 permissions:
   contents: write
@@ -14,70 +14,51 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: 下载上游 zip 包
+      - name: 下载并解压 TVBoxOSC/tvbox 到仓库根目录
         run: |
-          # "单线路" URL 编码后为 %E5%8D%95%E7%BA%BF%E8%B7%AF
-          curl -sL --fail \
-            "https://pizazz.us.ci/%E5%8D%95%E7%BA%BF%E8%B7%AF.zip" \
-            -o upstream.zip
-          [ -s upstream.zip ] || { echo "::error::下载失败"; exit 1; }
-          file upstream.zip | grep -qi zip || {
-            echo "::error::下载内容不是zip"
-            head -c 200 upstream.zip
-            exit 1
-          }
-
-      - name: 解压并同步到仓库根目录
-        run: |
-          rm -rf extract && mkdir extract
-          unzip -o -q upstream.zip -d extract
-          # 有些zip嵌套一层目录，判断后选择正确的源
-          if [ $(ls extract | wc -l) -eq 1 ] && [ -d "extract"/* ]; then
-            SRC="extract/$(ls extract | head -1)/"
-          else
-            SRC="extract/"
-          fi
-          echo "解压根: $SRC"
-          # 同步到仓库根目录（保留 .git 和 .github）
+          curl -fsSL -o /tmp/src.zip "https://pizazz.us.ci/%E5%8D%95%E7%BA%BF%E8%B7%AF.zip"
+          mkdir -p /tmp/ex
+          python3 - <<'PY'
+          import zipfile, pathlib
+          DST = pathlib.Path('/tmp/ex'); PREFIX = 'TVBoxOSC/tvbox/'
+          with zipfile.ZipFile('/tmp/src.zip') as z:
+              for info in z.infolist():
+                  # 处理 Windows 打包的 GBK 中文文件名（如 js/路漫漫.js、版本.png）
+                  if info.flag_bits & 0x800:
+                      name = info.filename
+                  else:
+                      try: name = info.filename.encode('cp437').decode('gbk')
+                      except Exception: name = info.filename
+                  name = name.replace('\\', '/')
+                  if not name.startswith(PREFIX) or info.is_dir(): continue
+                  t = DST / name[len(PREFIX):]
+                  t.parent.mkdir(parents=True, exist_ok=True)
+                  with z.open(info) as f, open(t, 'wb') as out:
+                      out.write(f.read())
+          PY
+          # 整体同步到根目录：.git 和 cookie 不动，上游删掉的文件也会跟着删
           rsync -a --delete \
-            --exclude='.git' --exclude='.github' --exclude='extract' \
-            "$SRC" ./
-          rm -rf extract upstream.zip
-          ls -la
+                --exclude '.git' \
+                --exclude 'TVBox/bili_cookie.txt' \
+                /tmp/ex/ ./
 
-      - name: 改写 json 中所有相对路径为 raw 绝对 URL
+      - name: 删除 api.json 中的“版本信息”
         run: |
-          python3 << 'PYEOF'
-          import json, os
-          BASE = "https://raw.githubusercontent.com/dxdragon/myTVBox/main"
-          with open('api.json', 'r', encoding='utf-8') as f:
-              data = json.load(f)
-          def walk(obj):
-              if isinstance(obj, dict):
-                  return {k: walk(v) for k, v in obj.items()}
-              if isinstance(obj, list):
-                  return [walk(x) for x in obj]
-              if isinstance(obj, str) and obj.startswith('./'):
-                  local = obj[2:]
-                  # 只有本地真实存在的文件才替换，避免误伤
-                  if os.path.exists(local):
-                      return f"{BASE}/{local}"
-                  print(f"警告: {obj} 不存在于仓库，保持原样")
-              return obj
-          data = walk(data)
-          with open('api.json', 'w', encoding='utf-8') as f:
-              json.dump(data, f, ensure_ascii=False, indent=2)
-          print("相对路径已改写为 GitHub raw 绝对 URL")
-          PYEOF
+          python3 - <<'PY'
+          import json, pathlib
+          p = pathlib.Path('api.json')
+          cfg = json.loads(p.read_text(encoding='utf-8'))
+          cfg['sites'] = [s for s in cfg['sites'] if s.get('key') != '版本信息']
+          p.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+          print('剩余站点数:', len(cfg['sites']))
+          PY
 
-      - name: 提交变更（仅在有更新时）
+      - name: 提交推送
         run: |
-          git config user.name "github-actions[bot]"
+          git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          if git diff --cached --quiet; then
-            echo "上游无更新，跳过提交"
-          else
-            git commit -m "sync upstream $(date -u +%F-%H:%M)"
+          if git diff --cached --quiet; then echo "无变化"; else
+            git commit -m "sync: 单线路 $(date -u '+%F %H:%M') UTC"
             git push
           fi
