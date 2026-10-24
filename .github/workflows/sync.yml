@@ -2,7 +2,7 @@ name: Sync TVBox 单线路
 
 on:
   schedule:
-    - cron: '0 18 * * *'      # 北京时间凌晨 2 点（UTC 18:00）
+    - cron: '0 18 * * *'      # 北京时间凌晨 2 点
   workflow_dispatch:
     inputs:
       force:
@@ -19,7 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-            - name: single.json 取下载地址 → curl 下载 → 算版本指纹
+      - name: single.json 取下载地址 → curl 下载 → 算版本指纹
         id: ver
         env:
           FORCE: ${{ inputs.force }}
@@ -42,7 +42,6 @@ jobs:
                       print(f'· single.json 请求失败({i+1}/{tries}): {e}')
               raise err
 
-          # ① 下载地址：只信 single.json，原样保留 Unicode 交给 curl
           data = fetch_json()
           items = [it for g in data for it in g.get('list', []) if isinstance(it, dict)]
           dl = next((it for it in items if '下载' in it.get('name', '')
@@ -57,24 +56,21 @@ jobs:
           v = (dl.get('version') or '').strip()
           label = v if (v and v.lower() != 'version' and len(v) <= 20) else ''
 
-          # ② curl 下载（IDN、UA、重试都交给 curl）
           cmd = ['curl', '-fsSL', '--retry', '3', '--retry-delay', '2',
                  '--retry-all-errors', '--max-time', '300',
                  '-A', 'okhttp', '-o', '/tmp/src.zip', url]
           r = subprocess.run(cmd)
-          if r.returncode in (51, 60):   # 证书主机名不匹配 / 证书校验失败
+          if r.returncode in (51, 60):
               print('⚠️ 服务器证书与域名不匹配，跳过证书校验重试一次...')
               r = subprocess.run(cmd + ['-k'])
               if r.returncode == 0:
-                  print('⚠️⚠️ 本次下载未校验 TLS 证书（上游证书配置问题），'
-                        '已用 zip 结构+指纹校验兜底')
+                  print('⚠️⚠️ 本次下载未校验 TLS 证书，已用 zip 结构+指纹校验兜底')
           if r.returncode != 0:
               raise SystemExit(
                   f'❌ curl 下载失败 (exit {r.returncode})\n'
                   f'   地址来自 single.json: {url}\n'
-                  f'   22=HTTP错误(404/403,多半是地址又换了) 28=超时 6=DNS失败')
+                  f'   22=HTTP错误(404/403,地址可能又换了) 28=超时 6=DNS失败')
 
-          # ③ 魔数 + 指纹
           head = open('/tmp/src.zip', 'rb').read(4)
           if head[:2] != b'PK':
               raise SystemExit(f'❌ 下载内容不是 zip（前4字节 {head!r}）')
