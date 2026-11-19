@@ -159,8 +159,8 @@ jobs:
           for f in root.glob('*版本.png'): f.unlink()
           print(f'站点数 {before} → {len(cfg["sites"])}')
 
-          print(f'logo: {cfg.get("logo", "(无)")} → ./logo.gif')
-          cfg['logo'] = './logo.gif'
+          print(f'logo: {cfg.get("logo", "(无)")} → ./logo.png')
+          cfg['logo'] = './logo.png'
 
           cpath = pathlib.Path('custom.json')
           if not cpath.is_file():
@@ -203,6 +203,7 @@ jobs:
                 --exclude '.gitignore' \
                 --exclude 'custom.json' \
                 --exclude 'logo.gif' \
+                --exclude 'logo.png' \
                 --exclude '.upstream_fingerprint' \
                 --exclude 'TVBox/bili_cookie.txt' \
                 /tmp/ex/ ./
